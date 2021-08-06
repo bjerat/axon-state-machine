@@ -1,9 +1,9 @@
 package de.digitalfrontiers.axon.statemachine.domain
 
 import com.fasterxml.jackson.annotation.JsonIgnore
-import org.axonframework.commandhandling.gateway.CommandGateway
 import org.axonframework.config.ProcessingGroup
-import org.axonframework.eventhandling.EventBus
+import org.axonframework.extensions.reactor.commandhandling.gateway.ReactorCommandGateway
+import org.axonframework.extensions.reactor.eventhandling.gateway.ReactorEventGateway
 import org.axonframework.modelling.saga.SagaEventHandler
 import org.axonframework.modelling.saga.SagaLifecycle
 import org.axonframework.modelling.saga.StartSaga
@@ -17,11 +17,11 @@ class OrderProcessing {
 
     @JsonIgnore
     @Autowired
-    lateinit var commandGateway: CommandGateway
+    lateinit var commandGateway: ReactorCommandGateway
 
     @JsonIgnore
     @Autowired
-    lateinit var eventBus: EventBus
+    lateinit var eventGateway: ReactorEventGateway
 
     var orderId: UUID? = null
     var productItems: Map<UUID, Long>? = null
@@ -39,53 +39,58 @@ class OrderProcessing {
         productItems = event.productItems
         totalPrice = event.totalPrice
 
-        when(commandGateway.sendAndWait<Boolean>(ReserveCreditCommand(amount = event.totalPrice))) {
-            true -> {
-                eventBus.publishEvent(
-                    CreditReservedEvent(
-                        orderId = event.orderId,
-                        amount = event.totalPrice
+        commandGateway
+            .send<Boolean>(ReserveCreditCommand(amount = event.totalPrice))
+            .flatMapMany { when (it) {
+                true -> {
+                    eventGateway.publishEvent(
+                        CreditReservedEvent(
+                            orderId = event.orderId,
+                            amount = event.totalPrice
+                        )
                     )
-                )
-            }
-            false -> {
-                commandGateway.sendAndWait<Unit>(
-                    DenyOrderCommand(
-                        orderId = event.orderId,
-                        reason = "insufficient credits"
-                    )
-                )
-                SagaLifecycle.end()
-            }
-        }
+                }
+                false -> {
+                    commandGateway.send<Unit>(
+                        DenyOrderCommand(
+                            orderId = event.orderId,
+                            reason = "insufficient credits"
+                        )
+                    ).map { SagaLifecycle.end() }
+                }
+            }}.subscribe()
     }
 
     @SagaEventHandler(associationProperty = "orderId")
     fun on(event: CreditReservedEvent) {
-        val invoiceId = commandGateway.sendAndWait<UUID>(
-            SendInvoiceCommand(
-                orderId = event.orderId,
-                productItems = requireNotNull(productItems),
-                totalPrice = requireNotNull(totalPrice)
+        commandGateway
+            .send<UUID>(
+                SendInvoiceCommand(
+                    orderId = event.orderId,
+                    productItems = requireNotNull(productItems),
+                    totalPrice = requireNotNull(totalPrice)
+                )
             )
-        )
-        SagaLifecycle.associateWith("invoiceId", invoiceId.toString())
-
-        eventBus.publishEvent(
-            InvoiceRequestedEvent(invoiceId = invoiceId)
-        )
+            .flatMapMany {
+                SagaLifecycle.associateWith("invoiceId", invoiceId.toString())
+                eventGateway.publishEvent(
+                    InvoiceRequestedEvent(invoiceId = it)
+                )
+            }.subscribe()
     }
 
     @SagaEventHandler(associationProperty = "invoiceId")
     fun on(event: InvoiceRequestedEvent) {
-        val shipmentId = commandGateway.sendAndWait<UUID>(
-            ShipItemsCommand(productItems = requireNotNull(productItems))
-        )
-        SagaLifecycle.associateWith("shipmentId", shipmentId.toString())
-
-        eventBus.publishEvent(
-            ShipmentRequestedEvent(shipmentId = shipmentId)
-        )
+        commandGateway
+            .send<UUID>(
+                ShipItemsCommand(productItems = requireNotNull(productItems))
+            )
+            .flatMapMany {
+                SagaLifecycle.associateWith("shipmentId", shipmentId.toString())
+                eventGateway.publishEvent(
+                    ShipmentRequestedEvent(shipmentId = it)
+                )
+            }.subscribe()
     }
 
     @SagaEventHandler(associationProperty = "invoiceId")
@@ -106,14 +111,16 @@ class OrderProcessing {
 
     private fun finishIfNecessary() {
         if (paid && delivered) {
-            commandGateway.sendAndWait<Unit>(
-                MarkOrderCompleteCommand(
-                    orderId = requireNotNull(orderId),
-                    invoiceId = requireNotNull(invoiceId),
-                    shipmentId = requireNotNull(shipmentId)
+            commandGateway
+                .send<Unit>(
+                    MarkOrderCompleteCommand(
+                        orderId = requireNotNull(orderId),
+                        invoiceId = requireNotNull(invoiceId),
+                        shipmentId = requireNotNull(shipmentId)
+                    )
                 )
-            )
-            SagaLifecycle.end()
+                .map { SagaLifecycle.end() }
+                .subscribe()
         }
     }
 }

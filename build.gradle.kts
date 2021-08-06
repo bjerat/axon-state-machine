@@ -25,8 +25,9 @@ dependencies {
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
 	implementation("org.axonframework:axon-spring-boot-starter:4.4.5")
+    implementation("org.axonframework.extensions.reactor:axon-reactor-spring-boot-starter:4.4.3")
 
-	runtimeOnly("org.postgresql:postgresql:42.2.18")
+	runtimeOnly("com.h2database:h2")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("com.ninja-squad:springmockk:3.0.1")

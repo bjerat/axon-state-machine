@@ -2,6 +2,8 @@ package de.digitalfrontiers.axon.statemachine.domain
 
 import assertk.fail
 import io.mockk.junit5.MockKExtension
+import org.axonframework.extensions.reactor.commandhandling.gateway.DefaultReactorCommandGateway
+import org.axonframework.extensions.reactor.eventhandling.gateway.DefaultReactorEventGateway
 import org.axonframework.test.saga.SagaTestFixture
 import org.junit.jupiter.api.MethodOrderer
 import org.junit.jupiter.api.Order
@@ -17,6 +19,8 @@ class OrderProcessingTest {
     val fixture: SagaTestFixture<OrderProcessing> by lazy {
         SagaTestFixture(OrderProcessing::class.java).apply {
             withTransienceCheckDisabled()
+            registerResource(DefaultReactorCommandGateway.builder().commandBus(commandBus).build())
+            registerResource(DefaultReactorEventGateway.builder().eventBus(eventBus).build())
         }
     }
 
